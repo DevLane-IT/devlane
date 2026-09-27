@@ -1,0 +1,95 @@
+name: Build DevLane brand assets
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'assets/devlane-logo-black.svg'
+      - 'assets/devlane-symbol-black.svg'
+      - '.github/workflows/build-brand-assets.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install renderer dependencies
+        run: pip install cairosvg pillow
+
+      - name: Generate PNG assets from SVG masters
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+          import cairosvg
+
+          base = Path("assets")
+          logo_svg = (base / "devlane-logo-black.svg").read_text()
+          symbol_svg = (base / "devlane-symbol-black.svg").read_text()
+
+          cairosvg.svg2png(
+              bytestring=logo_svg.encode(),
+              write_to=str(base / "devlane-logo-black.png"),
+              output_width=3076,
+              output_height=856,
+          )
+
+          cairosvg.svg2png(
+              bytestring=symbol_svg.encode(),
+              write_to=str(base / "devlane-symbol-black.png"),
+              output_width=2048,
+              output_height=1965,
+          )
+
+          logo = Image.open(base / "devlane-logo-black.png").convert("RGBA")
+          target_w = 2300
+          target_h = round(logo.height * (target_w / logo.width))
+          logo = logo.resize((target_w, target_h), Image.Resampling.LANCZOS)
+          pos = ((3840 - target_w) // 2, (2160 - target_h) // 2)
+
+          white = Image.new("RGBA", (3840, 2160), (255, 255, 255, 255))
+          white.alpha_composite(logo, pos)
+          white.convert("RGB").save(base / "devlane-logo-black-16x9-4k.png", optimize=True)
+
+          transparent = Image.new("RGBA", (3840, 2160), (255, 255, 255, 0))
+          transparent.alpha_composite(logo, pos)
+          transparent.save(base / "devlane-logo-black-16x9-transparent-4k.png", optimize=True)
+
+          symbol = Image.open(base / "devlane-symbol-black.png").convert("RGBA")
+          ratio = min(380 / symbol.width, 380 / symbol.height)
+          symbol = symbol.resize(
+              (round(symbol.width * ratio), round(symbol.height * ratio)),
+              Image.Resampling.LANCZOS,
+          )
+          icon = Image.new("RGBA", (512, 512), (255, 255, 255, 0))
+          icon.alpha_composite(
+              symbol,
+              ((512 - symbol.width) // 2, (512 - symbol.height) // 2),
+          )
+          icon.save(base / "devlane-symbol-black-512.png", optimize=True)
+          PY
+
+      - name: Commit generated assets
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add assets/*.png
+          if git diff --cached --quiet; then
+            echo "No generated changes."
+          else
+            git commit -m "assets: generate high-resolution DevLane PNGs"
+            git push
+          fi
